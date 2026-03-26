@@ -1,0 +1,53 @@
+# ============================================
+# JOBHUNT SYSTEM CONFIG — Controls pipeline behavior
+# No personal data here — that lives in profile/
+# ============================================
+
+# LLM model settings (use LiteLLM model strings)
+# Examples: "claude-sonnet-4-20250514", "gpt-4o", "gpt-4o-mini",
+#           "gemini/gemini-2.0-flash", "gemini/gemini-1.5-pro"
+llm:
+  default_model: "claude-sonnet-4-20250514"
+  models:
+    scorer: "gemini/gemini-2.0-flash"
+    tailor: "claude-sonnet-4-20250514"
+    outreach: "claude-sonnet-4-20250514"
+    followup: null                          # null = use default_model
+
+# Which profile folder to load (supports switching profiles)
+profile_dir: "./profile"
+
+# Job sources to enable
+sources:
+  google_jobs: true
+  linkedin: true
+  wellfound: true
+  ycombinator: true
+  indeed: true
+  naukri: true
+  glassdoor: true
+  remoteok: true
+  rss_feeds:
+    - "https://wellfound.com/jobs.rss?role[]=Backend+Engineer"
+
+# Pipeline behaviour
+pipeline:
+  score_threshold: 60
+  max_jobs_per_run: 50
+  dedup_window_days: 30
+
+# Scheduling (cron expressions)
+schedule:
+  search_cron: "0 9 * * *"           # daily at 9am
+  followup_cron: "0 10 * * 1"        # weekly Monday 10am
+  followup_after_days: 7
+
+# Google Sheets
+sheets:
+  spreadsheet_id: "YOUR_GOOGLE_SHEET_ID"  # UPDATE
+  raw_jobs_tab: "RawJobs"
+  staging_tab: "StagingReview"
+
+# Resume generation
+resume:
+  template: "modern"

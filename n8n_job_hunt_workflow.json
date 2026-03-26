@@ -1,0 +1,325 @@
+{
+  "name": "Job Hunt Agent Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "hours", "hoursInterval": 24 }]
+        }
+      },
+      "id": "trigger-daily",
+      "name": "Daily Trigger (9am)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [240, 300],
+      "typeVersion": 1.1
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "appendOrUpdate",
+        "documentId": { "__rl": true, "value": "YOUR_GOOGLE_SHEET_ID", "mode": "id" },
+        "sheetName": { "__rl": true, "value": "RawJobs", "mode": "name" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "title": "={{ $json.title }}",
+            "company": "={{ $json.company }}",
+            "jd_url": "={{ $json.url }}",
+            "jd_text": "={{ $json.description }}",
+            "source": "={{ $json.source }}",
+            "date_found": "={{ $now.format('yyyy-MM-dd') }}",
+            "status": "new"
+          }
+        },
+        "options": { "handlingExistingData": "skipRow" }
+      },
+      "id": "sheet-write-raw",
+      "name": "Write to RawJobs sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [660, 180],
+      "typeVersion": 4
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "read",
+        "documentId": { "__rl": true, "value": "YOUR_GOOGLE_SHEET_ID", "mode": "id" },
+        "sheetName": { "__rl": true, "value": "RawJobs", "mode": "name" },
+        "filtersUI": {
+          "values": [{ "lookupColumn": "status", "lookupValue": "new" }]
+        }
+      },
+      "id": "sheet-read-new",
+      "name": "Read unscored jobs",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [660, 360],
+      "typeVersion": 4
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $credentials.httpHeaderAuth.value }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "=",
+              "value": "={{ JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 1000, system: $node['JD Scorer System Prompt'].json.prompt, messages: [{ role: 'user', content: 'JD:\\n' + $json.jd_text }] }) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "claude-scorer",
+      "name": "Claude: Score JD",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [900, 360],
+      "typeVersion": 4.1
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = JSON.parse($input.first().json.body);\nconst text = response.content[0].text;\nlet parsed;\ntry {\n  const clean = text.replace(/```json|```/g, '').trim();\n  parsed = JSON.parse(clean);\n} catch(e) {\n  parsed = { score: 0, apply: false, variant: 'backend', summary: text, red_flags: 'parse error' };\n}\nreturn [{ json: { ...parsed, row_id: $input.first().json.row_id, jd_text: $input.first().json.jd_text, company: $input.first().json.company, title: $input.first().json.title, jd_url: $input.first().json.jd_url } }];"
+      },
+      "id": "parse-score",
+      "name": "Parse score JSON",
+      "type": "n8n-nodes-base.code",
+      "position": [1100, 360],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "leftValue": "={{ $json.apply }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-apply",
+      "name": "Worth applying?",
+      "type": "n8n-nodes-base.if",
+      "position": [1300, 360],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $credentials.httpHeaderAuth.value }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "=",
+              "value": "={{ JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 1500, system: $node['Resume Tailor System Prompt'].json.prompt, messages: [{ role: 'user', content: 'Variant: ' + $json.variant + '\\n\\nJD:\\n' + $json.jd_text }] }) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "claude-resume",
+      "name": "Claude: Tailor resume",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1500, 280],
+      "typeVersion": 4.1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $credentials.httpHeaderAuth.value }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "=",
+              "value": "={{ JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 800, system: $node['Outreach Writer System Prompt'].json.prompt, messages: [{ role: 'user', content: 'Company: ' + $json.company + '\\nRole: ' + $json.title + '\\n\\nJD:\\n' + $json.jd_text }] }) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "claude-outreach",
+      "name": "Claude: Write outreach",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1500, 440],
+      "typeVersion": 4.1
+    },
+    {
+      "parameters": {
+        "jsCode": "const resumeResp = JSON.parse($('Claude: Tailor resume').first().json.body);\nconst outreachResp = JSON.parse($('Claude: Write outreach').first().json.body);\nconst scoreData = $('Parse score JSON').first().json;\nreturn [{\n  json: {\n    company: scoreData.company,\n    title: scoreData.title,\n    jd_url: scoreData.jd_url,\n    score: scoreData.score,\n    variant: scoreData.variant,\n    summary: scoreData.summary,\n    missing_keywords: scoreData.missing_keywords,\n    red_flags: scoreData.red_flags,\n    tailored_resume_notes: resumeResp.content[0].text,\n    outreach_draft: outreachResp.content[0].text,\n    date_generated: new Date().toISOString().split('T')[0],\n    status: 'awaiting_review'\n  }\n}];"
+      },
+      "id": "merge-outputs",
+      "name": "Merge all outputs",
+      "type": "n8n-nodes-base.code",
+      "position": [1700, 360],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "appendOrUpdate",
+        "documentId": { "__rl": true, "value": "YOUR_GOOGLE_SHEET_ID", "mode": "id" },
+        "sheetName": { "__rl": true, "value": "StagingReview", "mode": "name" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "company": "={{ $json.company }}",
+            "title": "={{ $json.title }}",
+            "jd_url": "={{ $json.jd_url }}",
+            "score": "={{ $json.score }}",
+            "variant": "={{ $json.variant }}",
+            "summary": "={{ $json.summary }}",
+            "missing_keywords": "={{ $json.missing_keywords }}",
+            "red_flags": "={{ $json.red_flags }}",
+            "tailored_resume_notes": "={{ $json.tailored_resume_notes }}",
+            "outreach_draft": "={{ $json.outreach_draft }}",
+            "date_generated": "={{ $json.date_generated }}",
+            "status": "awaiting_review",
+            "your_notes": "",
+            "date_sent": ""
+          }
+        },
+        "options": {}
+      },
+      "id": "sheet-write-staging",
+      "name": "Write to StagingReview sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [1900, 360],
+      "typeVersion": 4
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "update",
+        "documentId": { "__rl": true, "value": "YOUR_GOOGLE_SHEET_ID", "mode": "id" },
+        "sheetName": { "__rl": true, "value": "RawJobs", "mode": "name" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "scored_skip"
+          }
+        },
+        "where": {
+          "values": [{ "lookupColumn": "jd_url", "lookupValue": "={{ $json.jd_url }}" }]
+        }
+      },
+      "id": "sheet-mark-skip",
+      "name": "Mark as skipped",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [1500, 520],
+      "typeVersion": 4
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { prompt: `You are a job application scorer for a backend/fullstack/ML engineer. Given a job description, score the fit against this candidate profile and return ONLY valid JSON.\n\nCANDIDATE PROFILE:\n- Name: Adithyan Madhu\n- Current: SDE Intern at Paramount Products (Flask, Django, React, MySQL)\n- Previous: SDE Intern at Newgen Software (Java, RAG/LLM system with QdrantDB, Python)\n- Open Source: Merged PRs at Intel Auto-Round (PyTorch, FP8, ML inference)\n- Projects: Vinci UI (node-based AI image gen, AWS, React), ReadingRoom (RAG, ChromaDB, Django, Next.js)\n- Skills: Python, Go, TypeScript, Java, C++, Django, FastAPI, React, Next.js, PostgreSQL, Docker, AWS EC2/RDS/S3\n- LeetCode: 1800+ rating, 500+ problems\n- GATE 2025 qualified\n- Graduation: Aug 2025\n\nReturn ONLY this JSON structure, no other text:\n{\n  \"score\": <integer 0-100>,\n  \"apply\": <true if score >= 60, false otherwise>,\n  \"variant\": <\"backend\" | \"fullstack\" | \"ml\" | \"devops\">,\n  \"summary\": \"<2 sentence summary of the role and why it fits or doesn't>\",\n  \"missing_keywords\": \"<comma-separated list of JD keywords not in candidate profile>\",\n  \"red_flags\": \"<any concerns: over-seniority, location, niche stack mismatch, or 'none'>\"\n}` } }];"
+      },
+      "id": "JD Scorer System Prompt",
+      "name": "JD Scorer System Prompt",
+      "type": "n8n-nodes-base.code",
+      "position": [900, 180],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { prompt: `You are a resume tailoring assistant. Given a job description and a resume variant type, output bullet-point tailoring instructions — NOT a full resume. Be specific about which existing bullets to move up, which keywords to inject, and which projects to lead with.\n\nBASE RESUME CONTEXT:\nAdithyan Madhu — Backend/Full Stack/ML Engineer\n\nEXPERIENCE:\n1. Paramount Products (Jan 2026–Present): Flask, Django, React, MySQL. Built internal platform for 10,000+ garment designs, RESTful APIs, reduced manual processing 25%.\n2. Newgen Software (Apr–Oct 2024): Core Java, Servlets, Python, SQL, QdrantDB. Built RAG-based HR policy assistant (200+ docs indexed). Resolved 50+ UI/backend bugs. 20% form load improvement.\n3. GFG Campus Ambassador: Organized events for 300+ students.\n\nOPEN SOURCE:\n- Intel Auto-Round: PR #1348 (FP8 dequant refactor, registry pattern), PR #1365 (PyTorch get/set_submodule migration). Collaborated with Intel engineers.\n\nPROJECTS:\n- Vinci UI: Node-based AI image gen platform. AWS EC2+RDS+Nginx, React, Stable Diffusion, Google OAuth.\n- ReadingRoom: Social reading platform. Django+PostgreSQL backend, RAG with ChromaDB+Gemini, 30% API perf improvement.\n\nSKILLS: C++, Python, Go, TypeScript, Java | Django, FastAPI, React, Next.js | PostgreSQL, MySQL, ChromaDB | Docker, AWS EC2/RDS/S3, GitHub Actions\n\nACHIEVEMENTS: LeetCode 1800+ (top 8%), GATE 2025, ISRO Ideate finalist, Adobe Creative Challenge national winner.\n\nINSTRUCTIONS:\nOutput a structured list:\n1. LEAD WITH: which experience or project to put first for this JD\n2. MOVE UP: which bullets to reorder\n3. INJECT KEYWORDS: exact phrases from the JD to weave into existing bullets (don't fabricate new achievements)\n4. PROJECTS TO HIGHLIGHT: which 1-2 projects are most relevant\n5. SKILLS TO FRONT: which skills to list first in the skills section\n6. REMOVE OR DE-EMPHASISE: anything that weakens the application for this specific JD` } }];"
+      },
+      "id": "Resume Tailor System Prompt",
+      "name": "Resume Tailor System Prompt",
+      "type": "n8n-nodes-base.code",
+      "position": [1500, 140],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { prompt: `You are a cold outreach writer for a software engineer job hunt. Given a company name, role title, and job description, write two outreach messages.\n\nCANDIDATE CONTEXT:\nAdithyan Madhu — graduating Aug 2025, targeting backend/fullstack/ML roles.\nStrongest credentials: Merged PRs at Intel Auto-Round (ML inference library), RAG system built at Newgen Software, Vinci UI (AWS-deployed AI image platform), ReadingRoom (RAG + semantic search platform).\nGitHub: /Github (replace with actual URL)\nPortfolio: /Portfolio (replace with actual URL)\n\nWrite BOTH of the following:\n\n---COLD EMAIL---\nSubject: [punchy, specific, mentions Intel OSS or RAG work if relevant]\nBody: Max 110 words. Structure: 1 sentence specific to their company/product → 1 sentence your strongest relevant credential → 1 sentence ask (15 min call). NO fluff openers. NO \"I've always been passionate about...\". Sign off with name + GitHub link.\n\n---WELLFOUND MESSAGE---\nMax 70 words. Even more direct. 2 sentences: what you built that's relevant + why their company specifically. No subject line needed.\n\n---LINKEDIN INMAIL---\nSubject: [5 words max, credential-first]\nBody: Max 80 words. Same structure as cold email but warmer tone.\n\nReturn all three clearly labelled.` } }];"
+      },
+      "id": "Outreach Writer System Prompt",
+      "name": "Outreach Writer System Prompt",
+      "type": "n8n-nodes-base.code",
+      "position": [1500, 560],
+      "typeVersion": 2
+    }
+  ],
+  "connections": {
+    "Daily Trigger (9am)": {
+      "main": [[{ "node": "Read unscored jobs", "type": "main", "index": 0 }]]
+    },
+    "Read unscored jobs": {
+      "main": [[{ "node": "JD Scorer System Prompt", "type": "main", "index": 0 }]]
+    },
+    "JD Scorer System Prompt": {
+      "main": [[{ "node": "Claude: Score JD", "type": "main", "index": 0 }]]
+    },
+    "Claude: Score JD": {
+      "main": [[{ "node": "Parse score JSON", "type": "main", "index": 0 }]]
+    },
+    "Parse score JSON": {
+      "main": [[{ "node": "Worth applying?", "type": "main", "index": 0 }]]
+    },
+    "Worth applying?": {
+      "main": [
+        [
+          { "node": "Resume Tailor System Prompt", "type": "main", "index": 0 },
+          { "node": "Outreach Writer System Prompt", "type": "main", "index": 0 }
+        ],
+        [{ "node": "Mark as skipped", "type": "main", "index": 0 }]
+      ]
+    },
+    "Resume Tailor System Prompt": {
+      "main": [[{ "node": "Claude: Tailor resume", "type": "main", "index": 0 }]]
+    },
+    "Outreach Writer System Prompt": {
+      "main": [[{ "node": "Claude: Write outreach", "type": "main", "index": 0 }]]
+    },
+    "Claude: Tailor resume": {
+      "main": [[{ "node": "Merge all outputs", "type": "main", "index": 0 }]]
+    },
+    "Claude: Write outreach": {
+      "main": [[{ "node": "Merge all outputs", "type": "main", "index": 1 }]]
+    },
+    "Merge all outputs": {
+      "main": [[{ "node": "Write to StagingReview sheet", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "tags": ["job-hunt", "automation"],
+  "meta": {
+    "templateId": "job-hunt-agent-pipeline",
+    "instanceId": "adithyan-job-hunt"
+  }
+}
