@@ -9,7 +9,7 @@
 llm:
   default_model: "claude-sonnet-4-20250514"
   models:
-    scorer: "gemini/gemini-2.0-flash"
+    scorer: "gemini/gemini-2.5-flash"
     tailor: "claude-sonnet-4-20250514"
     outreach: "claude-sonnet-4-20250514"
     followup: null                          # null = use default_model
@@ -44,7 +44,7 @@ schedule:
 
 # Google Sheets
 sheets:
-  spreadsheet_id: "YOUR_GOOGLE_SHEET_ID"  # UPDATE
+  spreadsheet_id: "1o568h-IRIgeRXH2QkUQcN2C4sVEjLlh2sZ-dcp2-ulY"  # UPDATE
   raw_jobs_tab: "RawJobs"
   staging_tab: "StagingReview"
 
